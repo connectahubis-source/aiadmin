@@ -356,6 +356,11 @@ html{scroll-behavior:smooth}
 .ln-endpulse::before{content:'';position:absolute;left:-9px;top:-9px;width:18px;height:18px;border-radius:50%;background:radial-gradient(circle,rgba(255,212,59,.55),transparent 70%);animation:lnPulse 2.2s ease-in-out infinite}
 @keyframes lnPulse{0%,100%{transform:scale(.65);opacity:.45}50%{transform:scale(1.35);opacity:1}}
 @media (prefers-reduced-motion:reduce){.ln-area,.ln-endpulse::before{animation:none}}
+/* ===== 録音インジケータ ===== */
+.rec-dot{display:inline-block;width:11px;height:11px;border-radius:50%;background:var(--coral);box-shadow:0 0 8px var(--coral);animation:recPulse 1.1s ease-in-out infinite}
+.rec-dot.paused{background:var(--yellow);box-shadow:0 0 6px var(--yellow);animation:none}
+@keyframes recPulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.7)}}
+@media (prefers-reduced-motion:reduce){.rec-dot{animation:none}}
 </style>
 </head>
 <body>
@@ -5794,6 +5799,51 @@ function MinutesQueue(){
   if(meetings.length===0)return<Empty label="録音キューは空です"/>;
   return<Table cols={[{k:'m',h:'会議',render:x=><span className="nm">{x.meetingName}</span>},{k:'d',h:'部署',render:x=>x.dept},{k:'dt',h:'日付',render:x=>x.meetingDate},{k:'t',h:'種別',render:x=>x.meetingType},{k:'s',h:'状態',render:x=><Bd t={tone(x.status)}>{x.status==='pending'?'処理待ち':x.status}</Bd>},{k:'f',h:'',render:x=>/^https?:/.test(x.fileUrl||'')?<a className="bsm" style={{height:28,padding:'0 12px'}} href={x.fileUrl} target="_blank" rel="noopener">録音</a>:null}]} rows={meetings} rowKey={(x,i)=>x.intakeId||i}/>;
 }
+/* ライブ録音(MediaRecorder)。inde.htmlの録音コントローラを移植。停止後のBlobをFile化して既存アップロードへ。 */
+function useRecorder(){
+  const[state,setState]=useState('idle'); // idle|recording|paused|stopping|done
+  const[ms,setMs]=useState(0);
+  const ref=useRef({mr:null,stream:null,chunks:[],mime:'',startedAt:0,accum:0,tick:null,blob:null});
+  const supported=(typeof MediaRecorder!=='undefined')&&!!(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia);
+  const pickMime=()=>{if(typeof MediaRecorder==='undefined')return null;const c=['audio/webm;codecs=opus','audio/webm','audio/mp4'];for(let i=0;i<c.length;i++){if(MediaRecorder.isTypeSupported&&MediaRecorder.isTypeSupported(c[i]))return c[i];}return '';};
+  const clearTick=()=>{const r=ref.current;if(r.tick){clearInterval(r.tick);r.tick=null;}};
+  const release=()=>{const r=ref.current;if(r.stream){try{r.stream.getTracks().forEach(t=>t.stop());}catch(e){}r.stream=null;}};
+  useEffect(()=>()=>{clearTick();release();},[]);
+  const startTick=()=>{const r=ref.current;clearTick();r.tick=setInterval(()=>setMs(r.accum+(performance.now()-r.startedAt)),500);};
+  const start=async()=>{
+    if(state==='recording'||state==='paused')return;
+    const mime=pickMime();if(mime===null)throw new Error('この端末は録音に対応していません');
+    const s=await navigator.mediaDevices.getUserMedia({audio:true});
+    const r=ref.current;r.stream=s;const opt={audioBitsPerSecond:16000};if(mime)opt.mimeType=mime;
+    r.mr=new MediaRecorder(s,opt);r.chunks=[];r.mime=mime||'audio/webm';r.blob=null;
+    r.mr.ondataavailable=e=>{if(e.data&&e.data.size)r.chunks.push(e.data);};
+    r.mr.onstop=()=>{try{r.blob=new Blob(r.chunks,{type:r.mime});}catch(e){r.blob=null;}release();clearTick();setMs(r.accum+(state==='paused'?0:(performance.now()-r.startedAt)));setState('done');};
+    r.accum=0;r.startedAt=performance.now();r.mr.start();setState('recording');setMs(0);startTick();
+  };
+  const pause=()=>{const r=ref.current;if(r.mr&&r.mr.state==='recording'){r.mr.pause();r.accum+=performance.now()-r.startedAt;clearTick();setMs(r.accum);setState('paused');}};
+  const resume=()=>{const r=ref.current;if(r.mr&&r.mr.state==='paused'){r.mr.resume();r.startedAt=performance.now();setState('recording');startTick();}};
+  const stop=()=>{const r=ref.current;if(r.mr&&(r.mr.state==='recording'||r.mr.state==='paused')){setState('stopping');try{r.mr.stop();}catch(e){}}};
+  const takeBlob=()=>ref.current.blob;
+  const reset=()=>{const r=ref.current;r.chunks=[];r.blob=null;setMs(0);setState('idle');};
+  return {state,ms,supported,start,pause,resume,stop,takeBlob,reset};
+}
+function recFmt(ms){const s=Math.max(0,Math.floor((ms||0)/1000));const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),x=s%60;const p=n=>String(n).padStart(2,'0');return (h>0?p(h)+':':'')+p(m)+':'+p(x);}
+function RecorderField({onRecorded,disabled}){
+  const rec=useRecorder();
+  useEffect(()=>{if(rec.state!=='done')return;const b=rec.takeBlob();if(!b||!b.size)return;const ext=/mp4/.test(b.type||'')?'m4a':'webm';const d=new Date();const p=n=>String(n).padStart(2,'0');const name='録音_'+d.getFullYear()+p(d.getMonth()+1)+p(d.getDate())+'_'+p(d.getHours())+p(d.getMinutes())+'.'+ext;let file;try{file=new File([b],name,{type:b.type||'audio/webm'});}catch(e){file=b;file.name=name;}if(onRecorded)onRecorded(file);},[rec.state]);
+  if(!rec.supported)return <div style={{fontSize:12,color:'var(--ink4)',padding:'8px 0'}}>この端末は その場録音に対応していません（ファイルを選択してください）。</div>;
+  return(<div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap',padding:'4px 0'}}>
+    {rec.state==='idle'&&<button className="bsm pri" type="button" disabled={disabled} onClick={()=>rec.start().catch(e=>alert('録音を開始できません: '+(e&&e.message||e)+'\nマイクの許可をご確認ください。'))}>● 録音開始</button>}
+    {(rec.state==='recording'||rec.state==='paused')&&<>
+      <span className={"rec-dot"+(rec.state==='paused'?' paused':'')}/>
+      <span className="num" style={{fontSize:13,color:rec.state==='paused'?'var(--yellow)':'var(--coral)',fontWeight:700}}>{rec.state==='paused'?'一時停止':'録音中'} {recFmt(rec.ms)}</span>
+      {rec.state==='recording'?<button className="bsm" type="button" onClick={rec.pause}>一時停止</button>:<button className="bsm" type="button" onClick={rec.resume}>再開</button>}
+      <button className="bsm danger" type="button" onClick={rec.stop}>■ 停止</button>
+    </>}
+    {rec.state==='stopping'&&<span style={{fontSize:13,color:'var(--ink3)'}}>停止処理中…</span>}
+    {rec.state==='done'&&<><span style={{fontSize:13,color:'var(--green)',fontWeight:600}}>✅ 録音完了 {recFmt(rec.ms)}（下のボタンで投稿）</span><button className="bsm" type="button" onClick={rec.reset}>録り直す</button></>}
+  </div>);
+}
 function MinutesUpload(){
   const dep=useAsync(()=>G.fetchData('listMinutesDepartments',{}),[]);
   const depts=arr((dep.data&&dep.data.departments)||dep.data);
@@ -5819,6 +5869,8 @@ function MinutesUpload(){
     <div style={{display:'flex',gap:12}}><div className="fld" style={{flex:1}}><label>会議名</label><input value={f.meeting_name} onChange={e=>setF(Object.assign({},f,{meeting_name:e.target.value}))}/></div><div className="fld" style={{flex:1}}><label>会議日</label><input type="date" value={f.meeting_date} onChange={e=>setF(Object.assign({},f,{meeting_date:e.target.value}))}/></div></div>
     <div style={{display:'flex',gap:12}}><div className="fld" style={{flex:1}}><label>種別</label><select value={f.meeting_type} onChange={e=>setF(Object.assign({},f,{meeting_type:e.target.value}))}>{['定例','不定期の会議','商談','1on1'].map(o=><option key={o}>{o}</option>)}</select></div><div className="fld" style={{flex:1}}><label>プロジェクト</label><input value={f.project} onChange={e=>setF(Object.assign({},f,{project:e.target.value}))}/></div></div>
     <div className="fld"><label>録音ファイル *（音声/動画）</label><input type="file" accept="audio/*,video/*" onChange={e=>setFile(e.target.files[0])}/></div>
+    <div className="fld"><label>または その場で録音（ブラウザのマイク）</label><RecorderField onRecorded={setFile} disabled={!!busy}/></div>
+    {file&&<div style={{fontSize:12,color:'var(--ink2)',margin:'0 0 8px'}}>選択中: <b style={{color:'#fff'}}>{file.name}</b>{file.size?(' （'+(file.size/1048576).toFixed(1)+' MB）'):''}</div>}
     {busy&&<div style={{margin:'10px 0'}}><div className="pbar"><i style={{width:(busy==='upload'?prog:busy==='finalize'?100:5)+'%'}}/></div><div style={{fontSize:11,color:'var(--ink3)',marginTop:5}}>{busy==='session'?'セッション作成中…':busy==='upload'?'アップロード中 '+prog+'%':'議事録キューに登録中…'}</div></div>}
     <button className="bsm pri" disabled={!!busy} onClick={upload} style={{marginTop:8}}>{busy?'処理中…':'録音を投稿'}</button>
   </div>);
@@ -13251,6 +13303,7 @@ function PageDeptHub(){
             <div className="fld" style={{flex:1,minWidth:180}}><label>プロジェクト</label><input value={f.project} onChange={e=>setF(Object.assign({},f,{project:e.target.value}))}/></div>
           </div>
           <div className="fld"><label>録音ファイル *（音声 / 動画）</label><input ref={fileRef} type="file" accept="audio/*,video/*" onChange={e=>setFile(e.target.files&&e.target.files[0])}/></div>
+          <div className="fld"><label>または その場で録音（ブラウザのマイク）</label><RecorderField onRecorded={setFile} disabled={!!busy}/></div>
           {file&&<div style={{fontSize:11,color:'var(--ink3)',margin:'2px 2px 8px'}}>選択中: {file.name} （{Math.round((file.size||0)/1048576*10)/10} MB）</div>}
           {busy&&<div style={{margin:'10px 0'}}><div className="pbar"><i style={{width:(busy==='upload'?prog:busy==='finalize'?100:5)+'%'}}/></div><div style={{fontSize:11,color:'var(--ink3)',marginTop:5}}>{busy==='session'?'セッション作成中…':busy==='upload'?('アップロード中 '+prog+'%'):'議事録キューに登録中…'}</div></div>}
           <button className="bsm pri" disabled={!!busy} onClick={upload} style={{marginTop:8}}>{busy?'処理中…':'録音を投稿'}</button>
