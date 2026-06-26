@@ -23796,9 +23796,18 @@ function canToggleInspect(){
 }
 /* フラグをトグル+永続化+App再描画。リロード不要(__rerender が UI 全体を再評価)。 */
 function toggleInspectChair(){
-  window.__inspectChair=!window.__inspectChair;
-  try{localStorage.setItem(INSPECT_LS_KEY, window.__inspectChair?'1':'0');}catch(e){}
+  var next=!window.__inspectChair;
+  window.__inspectChair=next;                       // UIは即時解放(myRank override)
+  try{localStorage.setItem(INSPECT_LS_KEY, next?'1':'0');}catch(e){}
   if(window.__rerender)window.__rerender();
+  // サーバ昇格(オーナー本人のみ・最大2hで自動失効)をUIトグルに同期 → これで保存(書込)も通る。
+  try{
+    if(window.G&&G.postData){
+      G.postData('inspect.setOwnerMode',{on:next})
+        .then(function(){ if(window.__toast)window.__toast(next?'点検モード(代表権限) 有効 — 保存も通ります(最大2時間で自動終了)':'点検モードを終了しました'); })
+        .catch(function(e){ if(window.__toast)window.__toast('サーバ昇格の切替に失敗: '+((e&&e.message)||e)+'（画面のみ解放中）'); });
+    }
+  }catch(e){}
 }
 
 function App(){const[authed,setAuthed]=useState(()=>G.hasSession());const[booting,setBooting]=useState(()=>G.hasSession());const[route,setRoute]=useState(()=>{var hr=hashRoute();if(hr.id)try{window.__detailMemberId=hr.id;}catch(e){}return hr.route||'dashboard';});const[,force]=useState(0);const[cmdk,setCmdk]=useState(false);const[sideOpen,setSideOpen]=useState(false);const[gauth,setGauth]=useState(false);
