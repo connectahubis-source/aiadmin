@@ -437,13 +437,13 @@ window.__confirm=window.__confirm||function(o){var m=(typeof o==='string')?o:((o
 const {useState,useEffect,useRef,useMemo,useCallback}=React;const G=window.GAS;const arr=x=>Array.isArray(x)?x:[];const yen=n=>'¥'+(Number(n)||0).toLocaleString();
 /* ===== 権限ゲート (index.html と同一モデル: 5段階ロール, highestRank 信頼, default-DENY) ===== */
 const ROLE_RANK={'代表':5,'副代表':4,'マネージャー':3,'アシマネ':2,'メンバー':1};
-function myRank(){const u=window.currentUser;if(!u||!u.member)return 0;if(typeof u.highestRank==='number')return u.highestRank;return ROLE_RANK[u.highestRole]||0;}
+function myRank(){if(window.__inspectChair)return ROLE_RANK['代表'];const u=window.currentUser;if(!u||!u.member)return 0;if(typeof u.highestRank==='number')return u.highestRank;return ROLE_RANK[u.highestRole]||0;}
 function hasRole(r){return myRank()>=(ROLE_RANK[r]||0);}
 function isHr(){const u=window.currentUser;return !!(u&&(u.isHr||(u.member&&u.member.isHr)||hasRole('代表')||(Array.isArray(u.allRoles)&&u.allRoles.some(x=>x&&x.deptName==='人事'))));}
 const PERM={'members.create':'副代表','members.update':'副代表','members.delete':'副代表','departments.create':'代表','departments.update':'代表','departments.delete':'代表','events.delete':'副代表','participants.delete':'副代表','registrations.delete':'副代表','todos.delete':'副代表','payments.delete':'副代表','templates.delete':'副代表','news.delete':'副代表','surveys.delete':'副代表','ads.delete':'副代表','albums.delete':'副代表','channels.delete':'副代表','notifications.delete':'副代表','events.update':'アシマネ','participants.update':'アシマネ','registrations.update':'アシマネ','todos.update':'アシマネ','payments.update':'アシマネ','templates.update':'アシマネ','news.update':'アシマネ','surveys.update':'アシマネ','ads.update':'アシマネ','albums.update':'アシマネ','events.create':'アシマネ','participants.create':'アシマネ','registrations.create':'アシマネ','todos.create':'アシマネ','payments.create':'アシマネ','templates.create':'アシマネ','news.create':'アシマネ','surveys.create':'アシマネ','ads.create':'アシマネ','albums.create':'アシマネ','org.update':'マネージャー','recruit.update':'マネージャー','channels.create':'副代表','channels.update':'副代表','chat.send':'メンバー','chat.deleteOwn':'メンバー','chat.deleteOthers':'副代表'};
 function canDo(a){const r=PERM[a];return r?hasRole(r):false;}
 function canSee(meta){if(!meta)return true;if(meta.need)return hasRole(meta.need);if(meta.gate==='leave')return hasRole('マネージャー')||isHr();return true;}
-function roleLabel(){const u=window.currentUser;return (u&&u.highestRole)||'メンバー';}
+function roleLabel(){if(window.__inspectChair)return '代表(点検)';const u=window.currentUser;return (u&&u.highestRole)||'メンバー';}
 function useAsync(fn,deps){const[s,set]=useState({loading:true,data:null,error:null});useEffect(()=>{let a=true;set(x=>({...x,loading:true}));Promise.resolve().then(fn).then(d=>{if(a)set({loading:false,data:d,error:null});}).catch(e=>{if(a)set({loading:false,data:null,error:e.message||String(e)});});return()=>{a=false;};},deps||[]);return s;}
 function useCount(t,dur){dur=dur||1200;const[v,setV]=useState(0);useEffect(()=>{let raf,st;const tick=(x)=>{if(!st)st=x;const p=Math.min(1,(x-st)/dur);setV(t*(1-Math.pow(1-p,3)));if(p<1)raf=requestAnimationFrame(tick);else setV(t);};raf=requestAnimationFrame(tick);return()=>cancelAnimationFrame(raf);},[t,dur]);return v;}
 function Count({value,fmt}){const v=useCount(value);return <>{fmt?fmt(Math.round(v)):Math.round(v)}</>;}
@@ -6874,6 +6874,21 @@ function MeetingTypeBoard(){
   const{useState}=React;
   const sch=useAsync(()=>G.fetchData('listMinutesMeetings',{}),[]);
   const meetings=arr((sch.data&&sch.data.meetings)||[]);
+  // 議事録ドキュメント(MinutesRecords, drive_url)を結合する。
+  // intake(録音)行は file_url(録音)しか持たないため、listMinutes(部署スコープ)から
+  // drive_url(=議事録文書)を取得し dept|会議名|日付 で突合する。
+  const deptsForMin=Array.from(new Set(meetings.map(m=>m.dept).filter(Boolean)));
+  const recs=useAsync(()=>deptsForMin.length
+    ? Promise.all(deptsForMin.map(d=>G.fetchData('listMinutes',{dept:d}).then(r=>arr(r&&r.items)).catch(()=>[])))
+        .then(a=>[].concat.apply([],a))
+    : Promise.resolve([]),[deptsForMin.join('|')]);
+  const minByKey={};
+  arr(recs.data).forEach(it=>{
+    const u=String(it.drive_url||'');if(!/^https?:/.test(u))return;
+    const k=String(it.department||'')+'|'+String(it.meeting_name||'')+'|'+String(it.meeting_date||'').slice(0,10);
+    if(!minByKey[k])minByKey[k]=u;
+  });
+  const minutesDocFor=m=>minByKey[String(m.dept||'')+'|'+String(m.meetingName||'')+'|'+String(m.meetingDate||'').slice(0,10)]||'';
   const[sel,setSel]=useState('');        // selected type key
   const[upTo,setUpTo]=useState('');      // type for which upload modal is open
   // normalize legacy values into the canonical 4-type vocabulary.
@@ -6882,16 +6897,16 @@ function MeetingTypeBoard(){
   const groups={};TYPES.forEach(t=>groups[t]=[]);const other=[];
   meetings.filter(m=>String(m.status||'')!=='cancelled').forEach(m=>{const t=norm(m.meetingType);if(groups[t])groups[t].push(m);else other.push(m);});
   const tone={'定例':'b','不定期の会議':'y','商談':'g','1on1':'v'};
-  const has=m=>/^https?:/.test(String(m.fileUrl||''));
+  const hasRec=m=>/^https?:/.test(String(m.fileUrl||''));
   if(sch.loading)return<Loading/>;
   const cur=sel?(groups[sel]||[]):[];
   return(<div>
     {!sel?
       <div className="cardg" style={{gridTemplateColumns:'repeat(auto-fill,minmax(220px,1fr))'}}>
-        {TYPES.map(t=>{const g=groups[t];const withRec=g.filter(has).length;const scheduledN=g.filter(m=>String(m.status||'')==='scheduled').length;return(
+        {TYPES.map(t=>{const g=groups[t];const withMin=g.filter(m=>minutesDocFor(m)).length;const withRec=g.filter(hasRec).length;const scheduledN=g.filter(m=>String(m.status||'')==='scheduled').length;return(
           <div key={t} className="tile glass" style={{padding:'16px 18px',cursor:'pointer'}} onClick={()=>setSel(t)}>
             <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><Bd t={tone[t]}>{t}</Bd><span className="num" style={{fontSize:22,fontWeight:800,color:'#fff'}}>{g.length}</span></div>
-            <div style={{fontSize:11,color:'var(--ink4)',marginTop:8}}>議事録あり {withRec} ・ 予定 {scheduledN}</div>
+            <div style={{fontSize:11,color:'var(--ink4)',marginTop:8}}>議事録 {withMin} ・ 録音 {withRec} ・ 予定 {scheduledN}</div>
             <div style={{marginTop:12,display:'flex',gap:8}}>
               <button className="bsm" style={{height:28,padding:'0 10px'}} onClick={e=>{e.stopPropagation();setSel(t);}}>議事録を閲覧</button>
               <button className="bsm pri" style={{height:28,padding:'0 10px'}} onClick={e=>{e.stopPropagation();setUpTo(t);}}>録音を投稿</button>
@@ -6906,7 +6921,8 @@ function MeetingTypeBoard(){
             {k:'d',h:'部署',render:x=>x.dept||'—'},
             {k:'dt',h:'日付',render:x=>String(x.meetingDate||'').slice(0,10)||'—'},
             {k:'s',h:'状態',render:x=><Bd t={x.status==='scheduled'?'b':x.status==='pending'?'y':'n'}>{x.status==='scheduled'?'予定':x.status==='pending'?'処理待ち':x.status||'—'}</Bd>},
-            {k:'f',h:'',render:x=>has(x)?<a className="bsm" style={{height:28,padding:'0 12px'}} href={x.fileUrl} target="_blank" rel="noopener">議事録/録音</a>:null}
+            {k:'min',h:'議事録',render:x=>{const d=minutesDocFor(x);return d?<a className="bsm" style={{height:28,padding:'0 12px'}} href={d} target="_blank" rel="noopener">議事録を開く</a>:(recs.loading?<span style={{fontSize:11,color:'var(--ink4)'}}>…</span>:hasRec(x)?<span style={{fontSize:11,color:'var(--ink4)'}}>生成中…</span>:<span style={{fontSize:11,color:'var(--ink4)'}}>—</span>);}},
+            {k:'rec',h:'録音',render:x=>hasRec(x)?<a className="bsm" style={{height:28,padding:'0 12px'}} href={x.fileUrl} target="_blank" rel="noopener">録音</a>:<span style={{fontSize:11,color:'var(--ink4)'}}>—</span>}
           ]} rows={cur} rowKey={(x,i)=>x.intakeId||i}/>}
       </div>}
     {upTo&&<Modal title={'録音を投稿 · '+upTo} onClose={()=>setUpTo('')} footer={<button className="bsm" onClick={()=>setUpTo('')}>閉じる</button>}>
@@ -23038,6 +23054,24 @@ function recParseScan(text){
   return {regId:reg?reg[0]:'',userId:usr?usr[0]:'',raw:m.trim()};
 }
 
+/* QRデコーダ: ネイティブ BarcodeDetector が無い/動かない端末(iOS Safari/Firefox/多くのデスクトップ)向けに
+   jsQR を CDN から遅延ロードしてフォールバックする。一度だけ読み込む。 */
+var __jsqrPromise=null;
+function loadJsQR(){
+  if(typeof window!=='undefined'&&window.jsQR)return Promise.resolve(window.jsQR);
+  if(__jsqrPromise)return __jsqrPromise;
+  __jsqrPromise=new Promise(function(resolve,reject){
+    try{
+      var s=document.createElement('script');
+      s.src='https://unpkg.com/jsqr@1.4.0/dist/jsQR.js';
+      s.async=true;
+      s.onload=function(){ resolve(window.jsQR); };
+      s.onerror=function(){ __jsqrPromise=null; reject(new Error('QRデコーダの読み込みに失敗しました')); };
+      document.head.appendChild(s);
+    }catch(e){ __jsqrPromise=null; reject(e); }
+  });
+  return __jsqrPromise;
+}
 function PageReception(){
   const toast=(m)=>{try{window.__toast&&window.__toast(m);}catch(e){}};
 
@@ -23067,10 +23101,13 @@ function PageReception(){
   const scanOnRef=useRef(false);
   const lastHitRef=useRef({code:'',t:0});   // debounce repeat reads of same code
   const busyScanRef=useRef(false);           // block overlapping detect→checkin
+  const canvasRef=useRef(null);              // jsQR フォールバック用の隠しcanvas
+  const engineRef=useRef('');                // 'bd'(BarcodeDetector) | 'jsqr'
   const eventRegsRef=useRef(eventRegs);      // latest regs for the rAF closure
   useEffect(()=>{eventRegsRef.current=eventRegs;});
 
   const [scanning,setScanning]=useState(false);
+  const [starting,setStarting]=useState(false);
   const [camErr,setCamErr]=useState('');     // non-empty → show manual-only fallback notice
   const [lastScan,setLastScan]=useState(null); // {ok,text,name,status}
   const [manual,setManual]=useState('');
@@ -23081,8 +23118,9 @@ function PageReception(){
   const [count,setCount]=useState(0);
 
   const hasBD=(typeof window!=='undefined')&&('BarcodeDetector'in window);
-  const hasCam=!!(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia);
-  const canScan=hasBD&&hasCam;
+  const secure=(typeof window==='undefined')||window.isSecureContext!==false;
+  const hasCam=!!(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia)&&secure;
+  const canScan=hasCam;   // QRエンジンは BarcodeDetector 優先・無ければ jsQR に自動フォールバックするので、カメラさえ使えれば可
 
   // ----- core: scanned code → registration → admin.checkin -----
   // Returns {matched:boolean}. Pushes result to recent + tally on success.
@@ -23131,57 +23169,82 @@ function PageReception(){
     }
   }
 
-  // ----- camera loop (BarcodeDetector) -----
+  // ----- camera loop (BarcodeDetector 優先 / jsQR フォールバック) -----
   async function tick(){
     if(!scanOnRef.current){return;}
-    const video=videoRef.current,det=detectorRef.current;
-    if(video&&det&&video.readyState>=2&&!busyScanRef.current){
+    const video=videoRef.current;
+    if(video&&video.readyState>=2&&!busyScanRef.current){
+      let val='';
       try{
-        const codes=await det.detect(video);
-        if(codes&&codes.length){
-          const val=codes[0].rawValue||'';
-          const now=Date.now();
-          // debounce: ignore same code within 1.2s, and any code while busy
-          if(val&&!(val===lastHitRef.current.code&&now-lastHitRef.current.t<1200)){
-            lastHitRef.current={code:val,t:now};
-            busyScanRef.current=true;
-            try{await processCode(val);}finally{busyScanRef.current=false;lastHitRef.current.t=Date.now();}
+        if(engineRef.current==='bd'&&detectorRef.current){
+          const codes=await detectorRef.current.detect(video);
+          if(codes&&codes.length)val=codes[0].rawValue||'';
+        }else if(engineRef.current==='jsqr'&&window.jsQR){
+          const c=canvasRef.current,w=video.videoWidth,h=video.videoHeight;
+          if(c&&w&&h){
+            c.width=w;c.height=h;
+            const ctx=c.getContext('2d',{willReadFrequently:true});
+            ctx.drawImage(video,0,0,w,h);
+            const dat=ctx.getImageData(0,0,w,h);
+            const r=window.jsQR(dat.data,w,h,{inversionAttempts:'dontInvert'});
+            if(r&&r.data)val=r.data;
           }
         }
       }catch(e){/* transient detect error — keep looping */}
+      if(val){
+        const now=Date.now();
+        // debounce: ignore same code within 1.5s, and any code while busy
+        if(!(val===lastHitRef.current.code&&now-lastHitRef.current.t<1500)){
+          lastHitRef.current={code:val,t:now};
+          busyScanRef.current=true;
+          try{await processCode(val);}finally{busyScanRef.current=false;lastHitRef.current.t=Date.now();}
+        }
+      }
     }
     if(scanOnRef.current)rafRef.current=requestAnimationFrame(tick);
   }
 
   async function startScan(){
     setCamErr('');setLastScan(null);
-    if(!canScan){
-      setCamErr(!hasBD?'この端末/ブラウザは BarcodeDetector に未対応です。下の手動入力で受付してください。':'カメラを利用できません。下の手動入力で受付してください。');
+    if(!hasCam){
+      setCamErr(!secure?'カメラ受付には https でのアクセスが必要です（このページが暗号化されていません）。下の手動入力で受付してください。':'この端末ではカメラを利用できません。下の手動入力で受付してください。');
       return;
     }
-    try{
-      detectorRef.current=new window.BarcodeDetector({formats:['qr_code']});
-    }catch(e){
-      setCamErr('QR検出器を初期化できませんでした。手動入力で受付してください。');
-      return;
-    }
+    setStarting(true);
+    // 1) まずカメラ取得(ユーザ操作直後に許可ダイアログを出す)。失敗は理由を明示。
     let stream;
     try{
-      stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});
+      stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}},audio:false});
     }catch(e){
-      setCamErr('カメラへのアクセスが拒否されました（'+((e&&e.name)||'')+'）。手動入力で受付してください。');
+      setStarting(false);
+      const nm=(e&&e.name)||'';
+      setCamErr(
+        nm==='NotAllowedError'||nm==='SecurityError'?'カメラの使用が許可されませんでした。ブラウザ/OSの設定でこのサイトのカメラを許可してから再度お試しください。':
+        nm==='NotFoundError'||nm==='OverconstrainedError'||nm==='DevicesNotFoundError'?'利用可能なカメラが見つかりませんでした。':
+        nm==='NotReadableError'?'カメラが他のアプリで使用中の可能性があります。他アプリを閉じて再度お試しください。':
+        'カメラを起動できませんでした（'+(nm||'不明')+'）。手動入力をご利用ください。');
       return;
     }
-    streamRef.current=stream;
-    scanOnRef.current=true;
-    setScanning(true);
-    const v=videoRef.current;
-    if(v){
-      v.srcObject=stream;
-      const p=v.play();
-      if(p&&p.catch)p.catch(()=>{});
+    // 2) QRエンジン選択: ネイティブ BarcodeDetector(qr_code 対応時)優先・無ければ jsQR を遅延ロード
+    detectorRef.current=null;engineRef.current='';
+    try{
+      if('BarcodeDetector'in window&&window.BarcodeDetector.getSupportedFormats){
+        const fmts=await window.BarcodeDetector.getSupportedFormats().catch(()=>[]);
+        if(fmts&&fmts.indexOf('qr_code')>=0){
+          detectorRef.current=new window.BarcodeDetector({formats:['qr_code']});
+          engineRef.current='bd';
+        }
+      }
+    }catch(e){detectorRef.current=null;engineRef.current='';}
+    if(!engineRef.current){
+      try{await loadJsQR();engineRef.current='jsqr';}
+      catch(e){setCamErr('QRの自動読み取りエンジンを読み込めませんでした（通信環境をご確認ください）。映像は表示されますが、読み取りは手動入力をご利用ください。');}
     }
-    rafRef.current=requestAnimationFrame(tick);
+    // 3) scanning を立てる → 下の useEffect([scanning]) が video へ stream を装着しループ開始
+    //    (React18 では setScanning 直後に videoRef は未マウントのため、ここで直接装着しない)
+    streamRef.current=stream;
+    setStarting(false);
+    setScanning(true);
   }
 
   function stopScan(){
@@ -23198,6 +23261,22 @@ function PageReception(){
   // stop camera on event change + on unmount (always release the stream)
   useEffect(()=>{if(scanning)stopScan();/* eslint-disable-next-line */},[eventId]);
   useEffect(()=>()=>stopScan(),[]);
+
+  // scanning が true になり <video> がマウントされたら stream を装着しスキャンループ開始。
+  // (startScan で直接 videoRef.current を触ると React18 のバッチ描画前で null のため装着できない)
+  useEffect(()=>{
+    if(!scanning)return;
+    const v=videoRef.current,stream=streamRef.current;
+    if(v&&stream){
+      try{v.srcObject=stream;}catch(e){try{v.src=URL.createObjectURL(stream);}catch(_){}}
+      try{v.setAttribute('playsinline','true');v.muted=true;}catch(e){}
+      const p=v.play();if(p&&p.catch)p.catch(()=>{});
+    }
+    scanOnRef.current=true;
+    rafRef.current=requestAnimationFrame(tick);
+    return ()=>{scanOnRef.current=false;if(rafRef.current){cancelAnimationFrame(rafRef.current);rafRef.current=0;}};
+    /* eslint-disable-next-line */
+  },[scanning]);
 
   async function submitManual(){
     const q=manual.trim();
@@ -23266,23 +23345,24 @@ function PageReception(){
             <div className="h">カメラでスキャン</div>
             <div className="gsp"/>
             {canScan&&(!scanning
-              ? <button className="bsm pri" onClick={startScan}>カメラを起動</button>
+              ? <button className="bsm pri" onClick={startScan} disabled={starting}>{starting?'起動中…':'カメラを起動'}</button>
               : <button className="bsm danger" onClick={stopScan}>スキャン終了</button>)}
           </div>
 
-          {!canScan&&(
+          {!hasCam&&(
             <div className="tile glass" style={{padding:14,fontSize:12.5,color:'var(--ink2)',lineHeight:1.8}}>
-              この端末は{!hasBD?<b> BarcodeDetector（QR検出）に未対応</b>:<b> カメラに未対応</b>}です。下の<b>手動入力</b>で受付してください（QRコード R-### / U-### を入力、または氏名・メールで検索）。
+              この端末では<b>カメラ受付を利用できません</b>{!secure?<>（<b>https</b> でのアクセスが必要です）</>:<>（カメラ非対応）</>}。下の<b>手動入力</b>で受付してください（QRコード R-### / U-### を入力、または氏名・メールで検索）。
             </div>
           )}
 
           {scanning&&(
             <div>
               <div style={{position:'relative',background:'#000',borderRadius:12,overflow:'hidden',aspectRatio:'4/3',maxWidth:440}}>
-                <video ref={videoRef} style={{width:'100%',height:'100%',objectFit:'cover'}} playsInline muted/>
+                <video ref={videoRef} style={{width:'100%',height:'100%',objectFit:'cover'}} playsInline autoPlay muted/>
                 <div style={{position:'absolute',inset:'14%',border:'3px solid rgba(255,255,255,.75)',borderRadius:14,boxShadow:'0 0 0 9999px rgba(0,0,0,.18)'}}/>
               </div>
-              <div style={{fontSize:12,color:'var(--ink3)',marginTop:8}}>参加者の受付QRを枠内にかざしてください。読み取ると確認ダイアログが出ます。</div>
+              <canvas ref={canvasRef} style={{display:'none'}}/>
+              <div style={{fontSize:12,color:'var(--ink3)',marginTop:8}}>参加者の受付QRを枠内にかざしてください。読み取ると確認ダイアログが出ます。{engineRef.current==='jsqr'?'（jsQRエンジン）':engineRef.current==='bd'?'（高速QR検出）':''}</div>
             </div>
           )}
 
@@ -23692,10 +23772,39 @@ function ConfirmHost(){const[st,setSt]=useState(null);
   return <Modal title={st.title} onClose={()=>done(false)} footer={<><button className="bsm" onClick={()=>done(false)}>{st.cancelLabel}</button><button className={"bsm "+(st.danger?'danger':'pri')} onClick={()=>done(true)} autoFocus>{st.okLabel}</button></>}><div style={{fontSize:13,color:'var(--ink2)',lineHeight:1.75,whiteSpace:'pre-wrap'}}>{st.message}</div></Modal>;}
 /* ハッシュルーティング: #route?id=… を URL に同期し、ブックマーク/直リンク/戻る進むを可能に */
 function hashRoute(){try{var h=String(window.location.hash||'').replace(/^#/,'');if(!h)return{route:'',id:''};var qi=h.indexOf('?');var route=qi<0?h:h.substring(0,qi);var id='';if(qi>=0){try{id=new URLSearchParams(h.substring(qi+1)).get('id')||'';}catch(e){}}try{route=decodeURIComponent(route);}catch(e){}return{route:route,id:id};}catch(e){return{route:'',id:''};}}
+/* ===== 点検モード(代表権限) drop-in: top-level に1ブロック追加 =====
+   index.html は編集禁止。下の wiring の myRank 置換でこの関数群を参照する。
+   ここで定義する INSPECT_* / __inspectChair はトップレベル(no import, babel-standalone OK)。 */
+
+/* 許可リスト(編集容易): このメールのユーザにのみトグルUIを露出 */
+const INSPECT_ALLOW=['ryukipon217@gmail.com'];
+
+/* localStorage キー(永続化) */
+const INSPECT_LS_KEY='connecta.inspectChair';
+
+/* 起動時に localStorage から復元(リロードしても状態維持)。
+   早期に window へ載せておけば myRank() が最初の描画から正しく読む。 */
+try{window.__inspectChair=(localStorage.getItem(INSPECT_LS_KEY)==='1');}catch(e){window.__inspectChair=false;}
+
+/* 現在ユーザのメール(audit currentUserEmailAccess 準拠, ||{} ガード必須) */
+function __inspectMyEmail(){
+  return String(((window.currentUser||{}).member||{}).email||'').trim().toLowerCase();
+}
+/* トグルUIを出してよいか(本人/許可リスト限定) */
+function canToggleInspect(){
+  return INSPECT_ALLOW.indexOf(__inspectMyEmail())>=0;
+}
+/* フラグをトグル+永続化+App再描画。リロード不要(__rerender が UI 全体を再評価)。 */
+function toggleInspectChair(){
+  window.__inspectChair=!window.__inspectChair;
+  try{localStorage.setItem(INSPECT_LS_KEY, window.__inspectChair?'1':'0');}catch(e){}
+  if(window.__rerender)window.__rerender();
+}
+
 function App(){const[authed,setAuthed]=useState(()=>G.hasSession());const[booting,setBooting]=useState(()=>G.hasSession());const[route,setRoute]=useState(()=>{var hr=hashRoute();if(hr.id)try{window.__detailMemberId=hr.id;}catch(e){}return hr.route||'dashboard';});const[,force]=useState(0);const[cmdk,setCmdk]=useState(false);const[sideOpen,setSideOpen]=useState(false);const[gauth,setGauth]=useState(false);
   useEffect(()=>{if(authed&&!window.currentUser){G.fetchData('listTodos').catch(()=>{}).then(()=>force(x=>x+1));}},[authed]);
   useEffect(()=>{if(!authed)return;const t=setTimeout(()=>{['listEvents','listParticipants','listRegistrations','getMembersBundle','listMembers','listOneOnOnes','listDepartments','listScopedDepartments'].forEach(a=>{try{G.fetchData(a,{}).catch(()=>{});}catch(e){}});},700);return()=>clearTimeout(t);},[authed]);
-  useEffect(()=>{window.__go=(r,id)=>{if(id!=null)window.__detailMemberId=id;setRoute(r);window.scrollTo&&window.scrollTo(0,0);try{var __h='#'+r+((id!=null&&String(id)!=='')?('?id='+encodeURIComponent(id)):'');if(window.location.hash!==__h){window.__hashInternal=true;window.location.hash=__h;}}catch(e){}try{let inNav=false;NAV.forEach(g=>g.items.forEach(it=>{if(it[0]===r)inNav=true;}));if(inNav){let rec=[];try{rec=JSON.parse(localStorage.getItem('connecta.recents')||'[]');}catch(e){}rec=[r].concat(rec.filter(x=>x!==r)).slice(0,8);localStorage.setItem('connecta.recents',JSON.stringify(rec));window.__recents=rec;}}catch(e){}};window.__onUnauth__=()=>{try{G.clearSession();}catch(e){}window.__authExpired=true;window.currentUser=null;setRoute('dashboard');setAuthed(false);};window.__onGoogleAuth__=()=>{window.__googleAuthNeeded=true;setGauth(true);};try{if(!window.__alertOrig){window.__alertOrig=window.alert;window.alert=function(m){if(window.__toast)window.__toast(m);else window.__alertOrig(m);};}}catch(e){}try{window.addEventListener('hashchange',function(){if(window.__hashInternal){window.__hashInternal=false;return;}var hr=hashRoute();if(hr.route){if(hr.id!=null)window.__detailMemberId=hr.id;setRoute(hr.route);}});}catch(e){}},[]);
+  useEffect(()=>{window.__rerender=()=>force(x=>x+1);window.__go=(r,id)=>{if(id!=null)window.__detailMemberId=id;setRoute(r);window.scrollTo&&window.scrollTo(0,0);try{var __h='#'+r+((id!=null&&String(id)!=='')?('?id='+encodeURIComponent(id)):'');if(window.location.hash!==__h){window.__hashInternal=true;window.location.hash=__h;}}catch(e){}try{let inNav=false;NAV.forEach(g=>g.items.forEach(it=>{if(it[0]===r)inNav=true;}));if(inNav){let rec=[];try{rec=JSON.parse(localStorage.getItem('connecta.recents')||'[]');}catch(e){}rec=[r].concat(rec.filter(x=>x!==r)).slice(0,8);localStorage.setItem('connecta.recents',JSON.stringify(rec));window.__recents=rec;}}catch(e){}};window.__onUnauth__=()=>{try{G.clearSession();}catch(e){}window.__authExpired=true;window.currentUser=null;setRoute('dashboard');setAuthed(false);};window.__onGoogleAuth__=()=>{window.__googleAuthNeeded=true;setGauth(true);};try{if(!window.__alertOrig){window.__alertOrig=window.alert;window.alert=function(m){if(window.__toast)window.__toast(m);else window.__alertOrig(m);};}}catch(e){}try{window.addEventListener('hashchange',function(){if(window.__hashInternal){window.__hashInternal=false;return;}var hr=hashRoute();if(hr.route){if(hr.id!=null)window.__detailMemberId=hr.id;setRoute(hr.route);}});}catch(e){}},[]);
   useEffect(()=>{const h=e=>{if((e.metaKey||e.ctrlKey)&&(e.key==='k'||e.key==='K')){e.preventDefault();setCmdk(v=>!v);}};window.addEventListener('keydown',h);return()=>window.removeEventListener('keydown',h);},[]);
   if(booting)return<Boot onDone={()=>setBooting(false)}/>;
   if(!authed)return<><Login onDone={()=>{setAuthed(true);}}/><Companion/></>;
@@ -23703,9 +23812,9 @@ function App(){const[authed,setAuthed]=useState(()=>G.hasSession());const[bootin
   const denied=!canSee(metaOf(route));
   const Screen=SCREENS[route];
   const u=window.currentUser||{};const nm=String((u.member||{}).name||'運').slice(0,1);
-  return(<>{gauth&&<div style={{position:'fixed',top:0,left:0,right:0,zIndex:9999,background:'linear-gradient(90deg,var(--coral),var(--yellow))',color:'#1a1207',padding:'9px 16px',display:'flex',alignItems:'center',gap:12,fontSize:12.5,fontWeight:600,boxShadow:'0 4px 18px -6px #000'}}><span style={{flex:1}}>⚠ Googleの再ログインが必要かもしれません。別タブで Google にログイン（またはGASの公開設定「全員 / 自分として実行」を確認）→ 再読み込みしてください。ログイン状態（30日）は保持されています。</span><button className="bsm" onClick={()=>window.location.reload()}>再読み込み</button><button className="bsm" onClick={()=>setGauth(false)}>閉じる</button></div>}<div className="app">
+  return(<>{window.__inspectChair&&<div style={{position:'fixed',top:0,left:0,right:0,zIndex:9998,background:'linear-gradient(90deg,var(--coral),var(--yellow))',color:'#1a1207',padding:'6px 16px',display:'flex',alignItems:'center',gap:12,fontSize:12,fontWeight:700,boxShadow:'0 4px 18px -6px #000'}}><span style={{flex:1}}>点検モード(代表権限) — 画面・NAV・ボタンを一時解放中。データ取得はサーバ権限のまま(越権なし)。</span>{canToggleInspect()&&<button className="bsm" onClick={()=>toggleInspectChair()}>点検を終了</button>}</div>}{gauth&&<div style={{position:'fixed',top:0,left:0,right:0,zIndex:9999,background:'linear-gradient(90deg,var(--coral),var(--yellow))',color:'#1a1207',padding:'9px 16px',display:'flex',alignItems:'center',gap:12,fontSize:12.5,fontWeight:600,boxShadow:'0 4px 18px -6px #000'}}><span style={{flex:1}}>⚠ Googleの再ログインが必要かもしれません。別タブで Google にログイン（またはGASの公開設定「全員 / 自分として実行」を確認）→ 再読み込みしてください。ログイン状態（30日）は保持されています。</span><button className="bsm" onClick={()=>window.location.reload()}>再読み込み</button><button className="bsm" onClick={()=>setGauth(false)}>閉じる</button></div>}<div className="app">
     <div className="brand"><div className="mk">c+</div><div><b>connec<i>+a</i></b><small>AI CONSOLE</small></div></div>
-    <div className="top glass"><button className="hamb" onClick={()=>setSideOpen(true)} aria-label="メニュー"><svg viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/></svg></button><div className="stat"><span className="d"/>GAS 接続中</div><div className="cmd glass" onClick={()=>setCmdk(true)} style={{cursor:'text'}}><span className="dot"/><input readOnly placeholder="あおい に頼む・探す  —  画面へ移動 (⌘K)" style={{cursor:'text'}}/><kbd>⌘K</kbd></div><div className="rolechip" title="あなたの最高ロール"><span className="rd"/>{roleLabel()}<NotificationBadge/></div><div className="tu"><div className="av">{nm}</div></div></div>
+    <div className="top glass"><button className="hamb" onClick={()=>setSideOpen(true)} aria-label="メニュー"><svg viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/></svg></button><div className="stat"><span className="d"/>GAS 接続中</div><div className="cmd glass" onClick={()=>setCmdk(true)} style={{cursor:'text'}}><span className="dot"/><input readOnly placeholder="あおい に頼む・探す  —  画面へ移動 (⌘K)" style={{cursor:'text'}}/><kbd>⌘K</kbd></div><div className="rolechip" title={window.__inspectChair?'点検モード中(UIのみ代表・データはサーバ権限)':'あなたの最高ロール'} style={window.__inspectChair?{color:'var(--coral)',background:'color-mix(in srgb,var(--coral) 14%,transparent)',borderColor:'color-mix(in srgb,var(--coral) 40%,transparent)'}:undefined}><span className="rd" style={window.__inspectChair?{background:'var(--coral)'}:undefined}/>{roleLabel()}<NotificationBadge/></div>{canToggleInspect()&&<button className="bsm" onClick={()=>toggleInspectChair()} title="画面のみ解放・データはサーバ権限のまま" style={window.__inspectChair?{borderColor:'color-mix(in srgb,var(--coral) 50%,transparent)',background:'color-mix(in srgb,var(--coral) 12%,transparent)',color:'var(--coral)'}:undefined}>{window.__inspectChair?'点検中(代表) ●':'点検モード'}</button>}<div className="tu"><div className="av">{nm}</div></div></div>
     <div className={"side"+(sideOpen?' open':'')}>{NAV.map(g=>{const vis=g.items.filter(it=>canSee(it[2]));if(!vis.length)return null;return(<div key={g.grp} className="navgrp"><div className="lab">{g.grp}</div>{vis.map(it=>{const k=it[0],label=it[1],m=it[2];return(<div key={k} className={"ni"+(route===k?' on':'')} onClick={()=>{if(window.__go)window.__go(k);else setRoute(k);setSideOpen(false);}}><NavIcon k={k}/>{label}{m&&m.need&&<span className="lk" title={m.need+'以上のみ'}>{m.need==='代表'?'代表':m.need==='マネージャー'?'M+':m.need==='アシマネ'?'A+':'+'}</span>}</div>);})}</div>);})}</div>
     <div className={"sidebg"+(sideOpen?' show':'')} onClick={()=>setSideOpen(false)}/>
     <div className="main">{denied?<NoPerm/>:Screen?<Screen/>:<Stub name={route}/>}</div>
