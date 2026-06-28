@@ -8673,6 +8673,7 @@ function MeetingNamePicker({dept,value,onChange,onPick}){
   const scheduled=all.filter(m=>String(m.status||'')==='scheduled')
     .sort((a,b)=>String(a.meetingDate||a.createdAt).localeCompare(String(b.meetingDate||b.createdAt)));
   const[mode,setMode]=useState('pick'); // pick | free
+  const[selId,setSelId]=useState(''); // 選択中 intakeId(同名定例の取り違え防止: 名前でなく intakeId で行を一意特定)
   if(sch.loading)return <div style={{fontSize:12,color:'var(--ink3)',padding:'6px 0'}}>予定された会議を取得中…</div>;
   const hasScheduled=scheduled.length>0;
   return(<div>
@@ -8683,13 +8684,14 @@ function MeetingNamePicker({dept,value,onChange,onPick}){
         onClick={()=>setMode('free')}>自由入力（不定期）</button>
     </div>
     {mode==='pick'&&hasScheduled?
-      <select value={value||''} onChange={e=>{
-          const m=scheduled.find(x=>(x.meetingName||'')===e.target.value);
-          onChange&&onChange(e.target.value);
+      <select value={selId} onChange={e=>{
+          const id=e.target.value;setSelId(id);
+          const m=scheduled.find((x,i)=>String(x.intakeId||('__idx'+i))===id);
+          onChange&&onChange(m?(m.meetingName||''):'');
           if(m&&onPick)onPick({name:m.meetingName||'',date:String(m.meetingDate||'').slice(0,10),type:m.meetingType||'',intakeId:m.intakeId||''});
         }}>
         <option value="">予定された会議を選択…</option>
-        {scheduled.map((m,i)=><option key={m.intakeId||i} value={m.meetingName}>
+        {scheduled.map((m,i)=><option key={m.intakeId||i} value={m.intakeId||('__idx'+i)}>
           {(m.meetingName||'(無題)')+' · '+(String(m.meetingDate||'').slice(0,10)||'日付未定')+(m.meetingType?' · '+m.meetingType:'')+(dept?'':' · '+(m.dept||''))}
         </option>)}
       </select>
@@ -18260,13 +18262,14 @@ function PageDeptHub(){
 
     const minItems=arr(min.rows&&min.rows.items);
     const dnorm=s=>(window.deptCanon?window.deptCanon(s||''):String(s||'')).trim().toLowerCase().replace(/[\s　]+/g,'');
-    const docFor=r=>{const rn=dnorm(r.meetingName||r.meeting_name),rd=String(r.meetingDate||r.meeting_date||'').slice(0,10);const h=minItems.find(i=>dnorm(i.meeting_name)===rn&&String(i.meeting_date||'').slice(0,10)===rd&&/^https?:/i.test(i.drive_url||''));return h?h.drive_url:'';};
+    const ymd=s=>{const t=String(s==null?'':s).replace(/\//g,'-');const m=t.match(/(\d{4}-\d{2}-\d{2})/);return m?m[1]:t.slice(0,10);};
+    const docFor=r=>{const rn=dnorm(r.meetingName||r.meeting_name);if(!rn)return'';const rd=ymd(r.meetingDate||r.meeting_date);const h=minItems.find(i=>dnorm(i.meeting_name)===rn&&ymd(i.meeting_date)===rd&&/^https?:/i.test(i.drive_url||''));return h?h.drive_url:'';};
     const cols=[
       {k:'meetingDate',h:'日付',w:'110px',render:r=>dhDate(r.meetingDate||r.meeting_date||r.held_at||r.created_at)},
       {k:'meetingName',h:'会議名',render:r=>(<div><div style={{fontWeight:600}}>{r.meetingName||'(会議名なし)'}</div>{r.project&&<div style={{fontSize:11,color:'var(--ink4)'}}>{r.project}</div>}</div>)},
       {k:'status',h:'状態',w:'90px',render:r=>{const st=String(r.status||'');return st==='cancelled'?<Bd t="r">中止</Bd>:st?<Bd t="n">{st}</Bd>:<Bd t="g">予定</Bd>;}},
       {k:'roster',h:'出欠',w:'120px',render:r=>{const rs=arr(r.roster);if(!rs.length)return<span style={{color:'var(--ink4)'}}>名簿未登録</span>;let p=0;rs.forEach(x=>{const s=String(x.rsvpStatus||'').toLowerCase();if(s==='attended'||x.attendance==='present')p++;});return<span style={{fontSize:12}}>{rs.length}名(出席{p})</span>;}},
-      {k:'link',h:'議事録',w:'92px',render:r=>{const doc=docFor(r);if(/^https?:/i.test(doc))return<a className="bsm" href={doc} target="_blank" rel="noopener" onClick={e=>e.stopPropagation()}>議事録 ↗</a>;const hasRec=/^https?:/i.test(r.fileUrl||'');const st=String(r.status||'');return (hasRec||(st&&st!=='scheduled'&&st!=='cancelled'))?<span style={{fontSize:11,color:'var(--ink3)'}} title="録音から自動生成中">生成中…</span>:<span style={{color:'var(--ink4)'}}>—</span>;}},
+      {k:'link',h:'議事録',w:'92px',render:r=>{const doc=docFor(r);if(/^https?:/i.test(doc))return<a className="bsm" href={doc} target="_blank" rel="noopener" onClick={e=>e.stopPropagation()}>議事録 ↗</a>;const hasRec=/^https?:/i.test(r.fileUrl||'');const st=String(r.status||'');if(st==='cancelled')return<span style={{color:'var(--ink4)'}}>—</span>;if(st==='processed')return<span style={{fontSize:11,color:'var(--ink3)'}} title="議事録は生成済み。議事録一覧で確認できます">処理済</span>;return (hasRec||(st&&st!=='scheduled'))?<span style={{fontSize:11,color:'var(--ink3)'}} title="録音から自動生成中">生成中…</span>:<span style={{color:'var(--ink4)'}}>—</span>;}},
       {k:'rec',h:'録音',w:'66px',render:r=>{const rec=r.fileUrl||'';return/^https?:/i.test(rec)?<a className="bsm" style={{height:25,padding:'0 8px'}} href={rec} target="_blank" rel="noopener" onClick={e=>e.stopPropagation()}>録音</a>:<span style={{color:'var(--ink4)'}}>—</span>;}},
       canMng?{k:'mng',h:'',w:'150px',render:r=>(<div style={{display:'flex',gap:5,flexWrap:'wrap'}} onClick={e=>e.stopPropagation()}><button className="bsm" style={{height:25,padding:'0 7px'}} onClick={()=>setMng({item:r,mode:'edit'})}>編集</button><button className="bsm" style={{height:25,padding:'0 7px'}} onClick={()=>setMng({item:r,mode:'postpone'})}>延期</button><button className="bsm" style={{height:25,padding:'0 7px'}} onClick={()=>setMng({item:r,mode:'delay'})}>遅延</button>{r.status!=='cancelled'&&<button className="bsm" style={{height:25,padding:'0 7px'}} onClick={()=>setMng({item:r,mode:'cancel'})}>中止</button>}<button className="bsm danger" style={{height:25,padding:'0 7px'}} onClick={()=>setMng({item:r,mode:'delete'})}>削除</button></div>)}:null,
     ].filter(Boolean);
