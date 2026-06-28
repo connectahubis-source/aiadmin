@@ -595,18 +595,6 @@ input[type=checkbox]:disabled,input[type=radio]:disabled{opacity:.45;cursor:not-
 .kpc:hover{box-shadow:inset 0 1px 0 rgba(255,255,255,.08),0 4px 10px -4px rgba(0,30,60,.5),0 18px 38px -18px rgba(0,40,80,.62),0 40px 80px -38px rgba(0,40,80,.8)}
 .qcard{transition:transform .22s cubic-bezier(.22,1,.36,1),box-shadow .22s}
 @media(prefers-reduced-motion:reduce){.kpc:hover,.qcard:hover{transform:none}}
-</style>直前)に追記。
-   これが無くても破綻はせず数値色が白(.kpc .kv デフォルト)になるだけだが、配色統一のため推奨。 */
-.kpc.violet .kv{color:var(--violet)}
-.kpc.blue .kv{color:var(--blue)}
-.kpc.teal .kv{color:var(--teal)}
-.kpc.n .kv{color:var(--ink2)}
-/* 要バックエンド/データ無しカードはトーンを落として「未取得」を視覚的に区別 */
-.kpc.n{opacity:.86}
-/* 既存の .scanl / .kpc::after sweep / .tile.glass.rise::before grid / prefers-reduced-motion 対応は
-   そのまま継承（新規keyframesは不要）。KPIレポートのカード(.kpc)・タイル(.tile.glass.rise)が
-   既存CIA演出を自動的に受け取る。 */
-</style>
 <style>
 /* === モバイル仕上げ (2026-06-28 監査統合): 横スクロール/桁クリップ/上バー/見出し折返し/タップ標的/バナー余白 === */
 @media(max-width:560px){
