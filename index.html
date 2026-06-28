@@ -595,6 +595,18 @@ input[type=checkbox]:disabled,input[type=radio]:disabled{opacity:.45;cursor:not-
 .kpc:hover{box-shadow:inset 0 1px 0 rgba(255,255,255,.08),0 4px 10px -4px rgba(0,30,60,.5),0 18px 38px -18px rgba(0,40,80,.62),0 40px 80px -38px rgba(0,40,80,.8)}
 .qcard{transition:transform .22s cubic-bezier(.22,1,.36,1),box-shadow .22s}
 @media(prefers-reduced-motion:reduce){.kpc:hover,.qcard:hover{transform:none}}
+</style>直前)に追記。
+   これが無くても破綻はせず数値色が白(.kpc .kv デフォルト)になるだけだが、配色統一のため推奨。 */
+.kpc.violet .kv{color:var(--violet)}
+.kpc.blue .kv{color:var(--blue)}
+.kpc.teal .kv{color:var(--teal)}
+.kpc.n .kv{color:var(--ink2)}
+/* 要バックエンド/データ無しカードはトーンを落として「未取得」を視覚的に区別 */
+.kpc.n{opacity:.86}
+/* 既存の .scanl / .kpc::after sweep / .tile.glass.rise::before grid / prefers-reduced-motion 対応は
+   そのまま継承（新規keyframesは不要）。KPIレポートのカード(.kpc)・タイル(.tile.glass.rise)が
+   既存CIA演出を自動的に受け取る。 */
+</style>
 <style>
 /* === モバイル仕上げ (2026-06-28 監査統合): 横スクロール/桁クリップ/上バー/見出し折返し/タップ標的/バナー余白 === */
 @media(max-width:560px){
@@ -900,7 +912,7 @@ function Dashboard(){
       </div>)}
       {todayMeetings.map((m,i)=><div key={'m'+(m.intakeId||i)} style={{display:'flex',alignItems:'center',gap:10,padding:'9px 0',borderTop:'1px solid var(--line)'}}>
         <Bd t="v">{m.meetingType||'会議'}</Bd><span style={{flex:1,minWidth:0,fontWeight:700,color:'#fff',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{m.meetingName||'(無題)'}</span><span style={{fontSize:11,color:'var(--ink4)'}}>{m.dept||''}</span>
-        <button className="bsm pri" onClick={()=>setTodayRec({dept:m.dept||'',meeting_name:m.meetingName||'',meeting_date:String(m.meetingDate||'').slice(0,10),meeting_type:m.meetingType||'定例'})}>🎙 録音を投稿</button>
+        <button className="bsm pri" onClick={()=>setTodayRec({dept:m.dept||'',meeting_name:m.meetingName||'',meeting_date:String(m.meetingDate||'').slice(0,10),meeting_type:m.meetingType||'定例',intakeId:m.intakeId||''})}>🎙 録音を投稿</button>
       </div>)}
     </div>}
     {todayRec&&<Modal title="📤 録音を投稿（今日の会議）" onClose={()=>setTodayRec(null)}><MinutesUpload2 preset={todayRec} onDone={()=>setTodayRec(null)}/></Modal>}
@@ -8621,7 +8633,7 @@ async function p8UploadRecording(file, meta, onProg){
     if(onProg)onProg(60);
     const res=await G.postData('uploadMinutesAudio',{filename:file.name||'recording.webm', mimeType:mime, dataBase64:dataBase64,
       dept:meta.dept||'', meeting_name:meta.meeting_name||'', meeting_date:meta.meeting_date||'',
-      meeting_type:meta.meeting_type||'', project:meta.project||'', roster:arr(meta.roster)});
+      meeting_type:meta.meeting_type||'', project:meta.project||'', intakeId:meta.intakeId||'', roster:arr(meta.roster)});
     if(onProg)onProg(100);
     return { intakeId:(res&&(res.intake_id||res.intakeId))||'', fileUrl:(res&&res.file_url)||'' };
   }
@@ -8642,7 +8654,7 @@ async function p8UploadRecording(file, meta, onProg){
   const fin=await G.postData('finalizeMinutesUpload',{
     fileId:fileId, dept:meta.dept||'', meeting_name:meta.meeting_name||'',
     meeting_date:meta.meeting_date||'', meeting_type:meta.meeting_type||'',
-    project:meta.project||'', roster:arr(meta.roster)});
+    project:meta.project||'', intakeId:meta.intakeId||'', roster:arr(meta.roster)});
   return { intakeId:(fin&&(fin.intake_id||fin.intakeId))||'', fileUrl:(fin&&fin.file_url)||'' };
 }
 
@@ -8731,7 +8743,8 @@ function MinutesUpload2({presetDept,presetType,preset,onDone}){
         onPick={p=>setF(prev=>Object.assign({},prev,{
           meeting_name:p.name||prev.meeting_name,
           meeting_date:p.date||prev.meeting_date,
-          meeting_type:p.type||prev.meeting_type}))}/>
+          meeting_type:p.type||prev.meeting_type,
+          intakeId:p.intakeId||''}))}/>
     </div>
     <div style={{display:'flex',gap:12}}>
       <div className="fld" style={{flex:1}}><label>会議日</label><input type="date" value={f.meeting_date} onChange={e=>set('meeting_date',e.target.value)}/></div>
@@ -8962,7 +8975,8 @@ function OOScheduledRecord(){
     try{
       const up=await p8UploadRecording(file,{
         dept:(m&&m.dept)||'', meeting_name:(m&&m.meetingName)||'1on1',
-        meeting_date:String((m&&m.meetingDate)||'').slice(0,10), meeting_type:'1on1', project:(m&&m.project)||''
+        meeting_date:String((m&&m.meetingDate)||'').slice(0,10), meeting_type:'1on1', project:(m&&m.project)||'',
+        intakeId:(m&&m.intakeId)||sel||''
       },p=>setProg(p));
       if(!up.intakeId)throw new Error('録音の登録に失敗しました（intakeId が空）');
       setDone(true);setBusy('');setFile(null);setSel('');
@@ -9074,7 +9088,7 @@ function PageSchedule(){
      ):(
       days.length===0?<Empty label="予定はありません"/>:<div>{days.map(d=><div key={d} className="sec"><div className="sech"><div className="h" style={{fontSize:14}}>{d}</div></div>{byDay[d].map((i,x)=>{const m=km(i.kind);return<div key={i.id||x} className="tile glass" style={{padding:'12px 15px',marginBottom:7,display:'flex',alignItems:'center',gap:12,opacity:i.status==='cancelled'?.5:1}}><span style={{width:4,alignSelf:'stretch',borderRadius:3,background:m.c}}/><div style={{flex:1}}><div style={{color:'#fff',fontSize:13,fontWeight:600,textDecoration:i.status==='cancelled'?'line-through':'none'}}>{i.title}</div><div style={{fontSize:11,color:'var(--ink4)',marginTop:3}}>{i.allDay?'終日':String(i.start||'').slice(11,16)}{i.end&&!i.allDay?'–'+String(i.end).slice(11,16):''}{i.dept?' · '+i.dept:''}</div></div><Bd t={m.t}>{m.l}</Bd></div>;})}</div>)}</div>
      )}
-    {dayPop&&<Modal title={dayPop.ds+' の予定'} onClose={()=>setDayPop(null)} footer={<button className="bsm pri" onClick={()=>{setDayPop(null);setAdd(true);}}>＋ この日に追加</button>}>{dayPop.evs.map((i,x)=>{const m=km(i.kind);const ed=i.meta&&i.meta.entryId;return<div key={i.id||x} className="tile glass" onClick={ed?()=>{setDayPop(null);setSchEdit(i);}:null} style={{padding:'11px 14px',marginBottom:8,display:'flex',alignItems:'center',gap:11,opacity:i.status==='cancelled'?.5:1,cursor:ed?'pointer':'default'}}><span style={{width:4,alignSelf:'stretch',borderRadius:3,background:m.c}}/><div style={{flex:1}}><div style={{color:'#fff',fontSize:13,fontWeight:600}}>{i.title}{ed?<span style={{fontSize:10,color:'var(--ink4)',marginLeft:6}}>✎ 編集</span>:''}</div><div style={{fontSize:11,color:'var(--ink4)',marginTop:3}}>{i.allDay?'終日':String(i.start||'').slice(11,16)}{i.end&&!i.allDay?'–'+String(i.end).slice(11,16):''}{i.dept?' · '+i.dept:''}{i.status==='cancelled'?' · 中止':''}</div></div><Bd t={m.t}>{m.l}</Bd>{i.kind==='meeting'&&isMgr&&<button className="bsm" onClick={e=>{e.stopPropagation();setDayPop(null);setSchRec({dept:i.dept||'',meeting_name:i.title||'',meeting_date:String(i.start||'').slice(0,10),meeting_type:(i.meta&&i.meta.meetingType)||'定例'});}} title="この会議の録音を投稿（会議名入り）">🎙録音</button>}</div>;})}</Modal>}
+    {dayPop&&<Modal title={dayPop.ds+' の予定'} onClose={()=>setDayPop(null)} footer={<button className="bsm pri" onClick={()=>{setDayPop(null);setAdd(true);}}>＋ この日に追加</button>}>{dayPop.evs.map((i,x)=>{const m=km(i.kind);const ed=i.meta&&i.meta.entryId;return<div key={i.id||x} className="tile glass" onClick={ed?()=>{setDayPop(null);setSchEdit(i);}:null} style={{padding:'11px 14px',marginBottom:8,display:'flex',alignItems:'center',gap:11,opacity:i.status==='cancelled'?.5:1,cursor:ed?'pointer':'default'}}><span style={{width:4,alignSelf:'stretch',borderRadius:3,background:m.c}}/><div style={{flex:1}}><div style={{color:'#fff',fontSize:13,fontWeight:600}}>{i.title}{ed?<span style={{fontSize:10,color:'var(--ink4)',marginLeft:6}}>✎ 編集</span>:''}</div><div style={{fontSize:11,color:'var(--ink4)',marginTop:3}}>{i.allDay?'終日':String(i.start||'').slice(11,16)}{i.end&&!i.allDay?'–'+String(i.end).slice(11,16):''}{i.dept?' · '+i.dept:''}{i.status==='cancelled'?' · 中止':''}</div></div><Bd t={m.t}>{m.l}</Bd>{i.kind==='meeting'&&isMgr&&<button className="bsm" onClick={e=>{e.stopPropagation();setDayPop(null);setSchRec({dept:i.dept||'',meeting_name:i.title||'',meeting_date:String(i.start||'').slice(0,10),meeting_type:(i.meta&&i.meta.meetingType)||'定例',intakeId:(i.meta&&i.meta.intakeId)||''});}} title="この会議の録音を投稿（会議名入り）">🎙録音</button>}</div>;})}</Modal>}
     {schRec&&<Modal title="📤 録音を投稿（会議名入り）" onClose={()=>setSchRec(null)}><MinutesUpload2 preset={schRec} onDone={()=>setSchRec(null)}/></Modal>}
     {add&&<ScheduleEntryModal entry={null} dept="" onClose={()=>setAdd(false)} onDone={()=>{setAdd(false);setN(x=>x+1);}}/>}
     {schEdit&&<ScheduleEntryModal entry={schEdit} dept="" onClose={()=>setSchEdit(null)} onDone={()=>{setSchEdit(null);setN(x=>x+1);}}/>}
@@ -18213,6 +18227,7 @@ function PageDeptHub(){
   // ============ 会議タブ ============
   function DhMeetings({dept,dhNorm,DH_MT}){
     const mt=useList('listMinutesMeetings',{dept},[dept]);
+    const min=useList('listMinutes',{dept},[dept]);   // 生成済み議事録(文書 drive_url)の真実源(音声 fileUrl とは別系統)
     const [mtTab,setMtTab]=useState('regular');
     const [q,setQ]=useState('');
     const [mng,setMng]=useState(null);const [rosterMtg,setRosterMtg]=useState(null);const canMng=(typeof hasRole==='function')&&hasRole('マネージャー');
@@ -18243,12 +18258,16 @@ function PageDeptHub(){
     const restricted=(DH_MT.find(t=>t.en===mtTab)||{}).restricted;
     const insight=dept+' の会議は計 '+meetings.length+'件(定例'+counts.regular+'・不定期'+counts.external+'・商談'+counts.sales+'・1on1'+counts.oneOnOne+')。'+(counts.regular===0?' 定例が未登録です。':'');
 
+    const minItems=arr(min.rows&&min.rows.items);
+    const dnorm=s=>(window.deptCanon?window.deptCanon(s||''):String(s||'')).trim().toLowerCase().replace(/[\s　]+/g,'');
+    const docFor=r=>{const rn=dnorm(r.meetingName||r.meeting_name),rd=String(r.meetingDate||r.meeting_date||'').slice(0,10);const h=minItems.find(i=>dnorm(i.meeting_name)===rn&&String(i.meeting_date||'').slice(0,10)===rd&&/^https?:/i.test(i.drive_url||''));return h?h.drive_url:'';};
     const cols=[
       {k:'meetingDate',h:'日付',w:'110px',render:r=>dhDate(r.meetingDate||r.meeting_date||r.held_at||r.created_at)},
       {k:'meetingName',h:'会議名',render:r=>(<div><div style={{fontWeight:600}}>{r.meetingName||'(会議名なし)'}</div>{r.project&&<div style={{fontSize:11,color:'var(--ink4)'}}>{r.project}</div>}</div>)},
       {k:'status',h:'状態',w:'90px',render:r=>{const st=String(r.status||'');return st==='cancelled'?<Bd t="r">中止</Bd>:st?<Bd t="n">{st}</Bd>:<Bd t="g">予定</Bd>;}},
       {k:'roster',h:'出欠',w:'120px',render:r=>{const rs=arr(r.roster);if(!rs.length)return<span style={{color:'var(--ink4)'}}>名簿未登録</span>;let p=0;rs.forEach(x=>{const s=String(x.rsvpStatus||'').toLowerCase();if(s==='attended'||x.attendance==='present')p++;});return<span style={{fontSize:12}}>{rs.length}名(出席{p})</span>;}},
-      {k:'link',h:'議事録',w:'90px',render:r=>{const u=r.fileUrl||r.drive_url||'';return/^https?:/i.test(u)?<a className="bsm" href={u} target="_blank" rel="noopener" onClick={e=>e.stopPropagation()}>開く ↗</a>:<span style={{color:'var(--ink4)'}}>—</span>;}},
+      {k:'link',h:'議事録',w:'92px',render:r=>{const doc=docFor(r);if(/^https?:/i.test(doc))return<a className="bsm" href={doc} target="_blank" rel="noopener" onClick={e=>e.stopPropagation()}>議事録 ↗</a>;const hasRec=/^https?:/i.test(r.fileUrl||'');const st=String(r.status||'');return (hasRec||(st&&st!=='scheduled'&&st!=='cancelled'))?<span style={{fontSize:11,color:'var(--ink3)'}} title="録音から自動生成中">生成中…</span>:<span style={{color:'var(--ink4)'}}>—</span>;}},
+      {k:'rec',h:'録音',w:'66px',render:r=>{const rec=r.fileUrl||'';return/^https?:/i.test(rec)?<a className="bsm" style={{height:25,padding:'0 8px'}} href={rec} target="_blank" rel="noopener" onClick={e=>e.stopPropagation()}>録音</a>:<span style={{color:'var(--ink4)'}}>—</span>;}},
       canMng?{k:'mng',h:'',w:'150px',render:r=>(<div style={{display:'flex',gap:5,flexWrap:'wrap'}} onClick={e=>e.stopPropagation()}><button className="bsm" style={{height:25,padding:'0 7px'}} onClick={()=>setMng({item:r,mode:'edit'})}>編集</button><button className="bsm" style={{height:25,padding:'0 7px'}} onClick={()=>setMng({item:r,mode:'postpone'})}>延期</button><button className="bsm" style={{height:25,padding:'0 7px'}} onClick={()=>setMng({item:r,mode:'delay'})}>遅延</button>{r.status!=='cancelled'&&<button className="bsm" style={{height:25,padding:'0 7px'}} onClick={()=>setMng({item:r,mode:'cancel'})}>中止</button>}<button className="bsm danger" style={{height:25,padding:'0 7px'}} onClick={()=>setMng({item:r,mode:'delete'})}>削除</button></div>)}:null,
     ].filter(Boolean);
 
